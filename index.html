@@ -404,7 +404,9 @@ async function buildModel(entry, setStatus){
         rewritten: L.rewritten, first: L.first, prevSelected: !!local[i-1]?.selected, changedOld: L.first || L.rewritten ? 0 : L.prevLen - L.common,
         inputCount: L.input.length, outputItems: outputs,
         usage: pr.usage, redacted: pr.redacted, respLines: pr.lines, hasResponse: !!resp,
-        model: L.x.rec.attributes?.modelId, bytes: L.x.rec.attributes?.originalBytes
+        model: L.x.rec.attributes?.modelId, bytes: L.x.rec.attributes?.originalBytes,
+        // calls already in this request's context, for results whose call came from a turn outside the selection
+        historyCalls: new Map(L.input.filter(it => it.call_id && isModelItem(it)).map(it => [it.call_id, it]))
       };
       R.push(q);
     }
@@ -417,25 +419,36 @@ async function buildModel(entry, setStatus){
     if(txt != null) q.outputItems = [{ type: "message", role: "assistant", content: [{ text: txt }] }];
   }
   R.sort((a,b)=>a.start-b.start);
-  // tool results: match *_output items in later requests of the same thread by call_id
+  // tool results: match *_output items in later requests of the same thread by call_id,
+  // falling back to the call items carried in that request's own history input
   const calls = new Map();
+  const callOf = it => {
+    const code = it.input ?? it.arguments ?? JSON.stringify(it.action ?? it, null, 1);
+    const [label, cat] = labelCall(it.name || it.type, code);
+    return { kind: "call", tool: it.name || it.type, code: typeof code === "string" ? code : JSON.stringify(code, null, 1), label, cat, callId: it.call_id };
+  };
   for(const q of R){
     q.calls = [];
     q.outputs = q.outputItems.map(it => {
       if(it.type === "reasoning") return { kind: "reasoning", summary: (it.summary || []).map(s=>s.text).join("\n"), encrypted: !!it.encrypted_content };
       if(it.type === "message") return { kind: "text", text: textOf(it.content) };
-      const code = it.input ?? it.arguments ?? JSON.stringify(it.action ?? it, null, 1);
-      const [label, cat] = labelCall(it.name || it.type, code);
-      const o = { kind: "call", tool: it.name || it.type, code: typeof code === "string" ? code : JSON.stringify(code, null, 1), label, cat, callId: it.call_id };
+      const o = callOf(it);
       if(it.call_id) calls.set(q.thread + "|" + it.call_id, { o, q });
       q.calls.push(o); return o;
     });
   }
+  const historyHits = new Map();
   for(const q of R){
     q.inputs = [];
     for(const it of q.inputItems){
       if(isOutputItem(it)){
-        const hit = calls.get(q.thread + "|" + it.call_id);
+        const key = q.thread + "|" + it.call_id;
+        let hit = calls.get(key);
+        if(!hit && it.call_id){
+          hit = historyHits.get(key);
+          const hc = !hit && q.historyCalls.get(it.call_id);
+          if(hc){ hit = { o: callOf(hc), q: null, history: true }; historyHits.set(key, hit); }
+        }
         const raw = textOf(it.output);
         if(hit && hit.o.result == null){
           Object.assign(hit.o, { result: prettyResult(raw), resultChars: raw.length, doneAt: q.start, fromQ: hit.q });
@@ -443,7 +456,7 @@ async function buildModel(entry, setStatus){
           if(/Script running with cell ID/.test(raw)) hit.o.yielded = true;
           if(/outcome\\*"\s*:\s*\\*"rejected/.test(raw)) hit.o.rejected = true;
         }
-        q.inputs.push({ kind: "toolResult", call: hit?.o, from: hit?.q, raw });
+        q.inputs.push({ kind: "toolResult", call: hit?.o, from: hit?.q, history: !!hit?.history, callId: it.call_id, raw });
       } else q.inputs.push(describeInput(it));
     }
   }
@@ -755,8 +768,10 @@ function select(id, scroll){
   else ins.append(h("div", { class: "note" }, "其余为同一线程已有上下文（", q.prev ? ["前一次请求 ", link(q.prev), " 及更早"] : "上一次请求不在本次范围内", `），本次请求共 ${kfmt(t.input)} token、${q.inputCount} 条上下文。` + (q.changedOld ? `旧上下文中有 ${q.changedOld} 条被改写，已一并列出。` : "")));
   q.inputs.forEach(x => {
     if(x.kind === "toolResult"){
-      if(x.call) ins.append(h("div", { class: "note" }, "工具结果 ← ", x.from ? link(x.from) : "", " " + x.call.label), resultBlock(x.call, false));
-      else ins.append(block("工具结果（调用不在本次范围内）", `${kfmt(x.raw.length)} 字符`, prettyResult(x.raw), false));
+      if(x.call && x.history) ins.append(h("div", { class: "note" }, "工具结果 ← 历史上下文中的调用（发生在选中范围之前的回合） " + x.call.label),
+        block(`调用 ${x.call.tool}`, `${kfmt(x.call.code.length)} 字符`, x.call.code, false), resultBlock(x.call, false));
+      else if(x.call) ins.append(h("div", { class: "note" }, "工具结果 ← ", x.from ? link(x.from) : "", " " + x.call.label), resultBlock(x.call, false));
+      else ins.append(block("工具结果（未在日志中找到对应调用）", `${kfmt(x.raw.length)} 字符` + (x.callId ? ` · ${x.callId}` : ""), prettyResult(x.raw), false));
     } else ins.append(block(x.title, `${kfmt(x.text.length)} 字符`, x.text, x.kind === "workon_input"));
   });
   if(!q.inputs.length) ins.append(h("div", { class: "note" }, "无新增输入"));
