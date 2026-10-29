@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trace 请求查看器</title>
+<!--
+  Standalone viewer for a WorkOn `logs/ai-trace` folder (AiTraceRecordV1, see docs/diagnostics.md
+  "AI Trace Capture Core"). Everything is parsed locally in the browser; nothing is uploaded.
+  Open this file directly and choose/drop an ai-trace folder, or pass `?src=<url of an ai-trace folder>`
+  when serving a folder over local HTTP.
+-->
+<style>
+:root{
+  color-scheme:light;
+  --bg:#fafaf9;--panel:#fff;--ink:#1c1917;--muted:#78716c;--line:#e7e5e4;--grid:#f0efed;--code:#f5f5f4;--sel:#eff6ff;
+  --llm:#d6d3d1;--discover:#e0a33a;--connector:#3b82f6;--local:#8b5cf6;--workon:#10b981;--shell:#0ea5e9;--wait:#ef4444;--other:#64748b;--compact:#111827;--final:#a8a29e;
+  --ctx:#3b82f6;--ctxfill:rgba(59,130,246,.12);--hi:rgba(239,68,68,.10);
+  --sev-h:#dc2626;--sev-m:#d97706;--sev-l:#64748b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+main{max-width:1320px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:15px;margin:28px 0 10px}
+.sub{color:var(--muted);font-size:13px;font-weight:400}
+.hidden{display:none!important}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+input[type=search]{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 10px;width:100%}
+.drop{border:2px dashed var(--line);border-radius:14px;padding:36px 16px;text-align:center;background:var(--panel);margin-top:18px}
+.drop.over{border-color:var(--ctx);background:var(--sel)}
+.drop p{margin:6px 0;color:var(--muted)}
+.status{margin-top:10px;font-size:13px;color:var(--muted);white-space:pre-wrap}
+.status.err{color:var(--sev-h)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:18px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--muted);font-size:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+.scroll-x{overflow-x:auto}
+.user-msg{font-size:16px;background:var(--panel);border-radius:8px;border:1px solid var(--line);border-left:4px solid var(--ctx);padding:8px 12px;white-space:pre-wrap}
+.screen{display:grid;gap:8px}
+.bubble{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--workon);border-radius:8px;padding:8px 12px;white-space:pre-wrap}
+.bubble .meta{font-size:12px;color:var(--muted);margin-bottom:4px;white-space:normal}
+.picker{max-height:62vh;overflow:auto;padding:0}
+.pick{display:grid;grid-template-columns:150px 1fr auto;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;align-items:start}
+.pick:hover{background:var(--grid)}
+.pick .t{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px}
+.pick .x{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.pick .k{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;white-space:nowrap}
+.pick .k[data-root]{color:var(--ink);border-color:var(--ink)}
+svg{display:block;font-size:11px}
+svg text{fill:var(--muted)}
+svg .blk{cursor:pointer}
+svg .blk.sel rect{stroke:var(--ink);stroke-width:2}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin:8px 2px 0;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+#tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 24px rgba(0,0,0,.15);max-width:340px;display:none;z-index:10}
+#tip .r{display:flex;justify-content:space-between;gap:16px;color:var(--muted)}
+#tip .r em{font-style:normal;color:var(--ink);font-variant-numeric:tabular-nums}
+.explorer{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:12px;align-items:start}
+@media (max-width:900px){.explorer{grid-template-columns:1fr}.pick{grid-template-columns:1fr}}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chip{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:99px;padding:3px 10px;font-size:12px;cursor:pointer}
+.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#list{max-height:78vh;overflow:auto;padding:0}
+.row{display:grid;grid-template-columns:34px 52px 1fr auto;gap:6px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12.5px}
+.row:hover{background:var(--grid)}
+.row.sel{background:var(--sel)}
+.row .id,.row .t,.row .tok{color:var(--muted);font-variant-numeric:tabular-nums}
+.row .tok{font-size:11.5px}
+.row .lab{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}
+.lane{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:4px}
+.warn{color:var(--sev-h);font-size:11px;margin-left:4px}
+#detail{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
+#detail h3{margin:0 0 2px;font-size:16px}
+.sec{margin-top:14px}
+.sec>.h{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.toks{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin-top:6px}
+.toks b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+details{border:1px solid var(--line);border-radius:8px;margin-bottom:6px;background:var(--panel)}
+details>summary{cursor:pointer;padding:6px 10px;font-size:13px}
+details>summary .sub{font-size:12px;margin-left:6px}
+pre{margin:0;padding:10px;background:var(--code);border-top:1px solid var(--line);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:460px;overflow:auto;border-radius:0 0 8px 8px}
+.box pre{border:1px solid var(--line);border-radius:8px}
+.badge{display:inline-block;font-size:11px;border-radius:4px;padding:0 6px;margin-left:6px;border:1px solid currentColor}
+.badge.red{color:var(--sev-h)} .badge.amber{color:var(--sev-m)} .badge.gray{color:var(--sev-l)}
+.note{font-size:12.5px;color:var(--muted);padding:6px 10px;border:1px dashed var(--line);border-radius:8px;margin-bottom:6px}
+.link{color:var(--ctx);cursor:pointer;text-decoration:underline}
+.nav{display:flex;gap:8px;margin-top:8px}
+.findings{display:grid;gap:8px}
+.f{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--sev-l);border-radius:10px;padding:10px 12px;cursor:pointer}
+.f[data-sev="高"]{border-left-color:var(--sev-h)} .f[data-sev="中"]{border-left-color:var(--sev-m)}
+.f.active{outline:2px solid var(--ctx)}
+.f h3{margin:0 0 4px;font-size:14px}
+.f .tag{font-size:11px;padding:1px 6px;border-radius:99px;border:1px solid currentColor;margin-right:6px}
+.f[data-sev="高"] .tag{color:var(--sev-h)} .f[data-sev="中"] .tag{color:var(--sev-m)} .f[data-sev="低"] .tag{color:var(--sev-l)}
+.f p{margin:4px 0 0;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+</style>
+</head>
+<body>
+<main>
+<h1>AI Trace 请求查看器</h1>
+<div class="sub">读取 WorkOn 的 <code>logs/ai-trace</code> 文件夹（store.json + segments/*/records.jsonl + blobs），选一条用户输入，还原它触发的每次模型请求、工具调用和最终上屏消息。所有解析在本地浏览器完成，不会上传。</div>
+
+<section id="loader">
+  <div class="drop" id="drop">
+    <p><b>把 ai-trace 文件夹拖到这里</b>（或包含 logs/ai-trace 的 profile 目录）</p>
+    <p><label class="btn primary">选择文件夹<input id="dir" type="file" webkitdirectory directory multiple hidden></label></p>
+    <p class="sub">默认位置：$userData/logs/ai-trace，例如 ~/Library/Application Support/WorkOn/logs/ai-trace</p>
+  </div>
+  <div class="status" id="status"></div>
+</section>
+
+<section id="pickerSec" class="hidden">
+  <h2>选择一条输入 <span class="sub" id="srcInfo"></span></h2>
+  <div class="bar">
+    <input type="search" id="q" placeholder="搜索输入内容…" style="max-width:360px">
+    <button id="reload">换一个文件夹</button>
+  </div>
+  <div class="chips" id="catChips"></div>
+  <div class="card picker" id="picker"></div>
+</section>
+
+<section id="view" class="hidden">
+  <div class="bar"><button id="back">← 返回输入列表</button><span class="status" id="viewStatus"></span></div>
+  <div class="kpis" id="kpis"></div>
+
+  <h2>触发输入 <span class="sub" id="trigInfo"></span></h2>
+  <div class="user-msg" id="usermsg"></div>
+
+  <h2>最终上屏输出 <span class="sub">— workon_send_message 实际发出的消息</span></h2>
+  <div class="screen" id="screen"></div>
+
+  <h2>泳道时间线 <span class="sub">— 灰色 = 模型推理（请求发出 → 响应结束），彩色 = 工具执行；点击任一块查看该次请求</span></h2>
+  <div class="card scroll-x"><svg id="gantt"></svg><div class="legend" id="legend"></div></div>
+
+  <h2>处理过程 <span class="sub">— 每一行是一次模型请求：本次新增输入 → 模型输出 → 工具结果。键盘 ↑ ↓ 切换</span></h2>
+  <div class="explorer">
+    <div><div class="chips" id="chips"></div><div class="card" id="list"></div></div>
+    <div class="card" id="detail"></div>
+  </div>
+
+  <h2>上下文大小 <span class="sub" id="ctxTitle"></span></h2>
+  <div class="card scroll-x"><svg id="ctx"></svg></div>
+
+  <h2>各会话开销</h2>
+  <div class="card scroll-x"><table id="cost"></table></div>
+
+  <h2>自动检查 <span class="sub">— 基于 trace 数据的规则检查，点击定位到相关请求</span></h2>
+  <div class="findings" id="findings"></div>
+</section>
+</main>
+<div id="tip"></div>
+<script>
+"use strict";
+/* ================= data source ================= */
+// A source exposes readText(relativePath) for paths relative to the ai-trace root and segments().
+function folderSource(entries, label){
+  // Root = the directory holding segments/. Prefer one named ai-trace when a whole profile was chosen.
+  const norm = entries.map(({path, file}) => ({ p: path.replace(/\\/g, "/"), file }));
+  const roots = [...new Set(norm.map(({p}) => (p.match(/^(.*?)segments\/[^/]+\/records\.jsonl$/) || [])[1]).filter(r => r != null))];
+  const root = roots.find(r => /(^|\/)ai-trace\/$/.test(r)) ?? roots[0] ?? "";
+  const map = new Map();
+  for(const {p, file} of norm) if(p.startsWith(root)) map.set(p.slice(root.length), file);
+  return {
+    label,
+    async readText(rel){ const f = map.get(rel); if(!f) throw new Error("缺少文件 " + rel); return f.text(); },
+    async segments(){ return [...new Set([...map.keys()].filter(k=>/^segments\/[^/]+\/records\.jsonl$/.test(k)).map(k=>k.split("/")[1]))].sort(); }
+  };
+}
+function urlSource(base){
+  base = base.replace(/\/$/,"");
+  return {
+    label: base,
+    async readText(rel){ const r = await fetch(base + "/" + rel); if(!r.ok) throw new Error(`读取失败 ${rel}: ${r.status}`); return r.text(); },
+    async segments(){ const s = JSON.parse(await this.readText("store.json")); return s.segments.map(x=>x.segmentId).sort(); }
+  };
+}
+async function collectDropped(items){
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if(entry.isFile){ const file = await new Promise((res,rej)=>entry.file(res,rej)); out.push({path: prefix + entry.name, file}); }
+    else if(entry.isDirectory){
+      const reader = entry.createReader();
+      for(;;){ const batch = await new Promise((res,rej)=>reader.readEntries(res,rej)); if(!batch.length) break; for(const e of batch) await walk(e, prefix + entry.name + "/"); }
+    }
+  };
+  for(const it of items){ const e = it.webkitGetAsEntry && it.webkitGetAsEntry(); if(e) await walk(e, ""); }
+  return out;
+}
+
+/* ================= AiTraceRecordV1 decoding ================= */
+let SRC = null;
+async function dec(node, seg){
+  if(!node) return null;
+  switch(node.kind){
+    case "scalar": return node.value;
+    case "array": { const a = []; for(const n of node.value) a.push(await dec(n, seg)); return a; }
+    case "object": { const o = {}; for(const k in node.value) o[k] = await dec(node.value[k], seg); return o; }
+    case "blob": { const t = await SRC.readText(`segments/${seg}/${node.relativePath}`); return node.encoding === "json" ? JSON.parse(t) : t; }
+  }
+  return null;
+}
+const payloadOf = r => r.payload && r.payload.storage === "tree" ? dec(r.payload.root, r.seg) : Promise.resolve(null);
+const textOf = c => typeof c === "string" ? c : Array.isArray(c) ? c.map(textOf).join("\n") : c && typeof c === "object" ? (c.text ?? JSON.stringify(c)) : String(c ?? "");
+
+/* ================= index ================= */
+let IDX = null;
+const KEEP = new Set(["provider.exchange","conversation.user_input","mcp.call","mcp.result","capture.loss"]);
+async function buildIndex(setStatus){
+  const segs = await SRC.segments();
+  if(!segs.length) throw new Error("没有找到 segments/*/records.jsonl，确认选的是 ai-trace 文件夹");
+  const recs = []; let total = 0;
+  for(const [i, seg] of segs.entries()){
+    setStatus(`读取段 ${i+1}/${segs.length}：${seg}`);
+    const text = await SRC.readText(`segments/${seg}/records.jsonl`);
+    for(const line of text.split("\n")){
+      if(!line) continue; total++;
+      let r; try{ r = JSON.parse(line); }catch{ continue; }   // an active segment may end with a partial line
+      const keep = KEEP.has(r.recordType) || (r.recordType === "protocol.frame" && r.attributes?.method === "thread/tokenUsage/updated")
+        || (r.recordType === "conversation.assistant_output" && r.attributes?.method === "item/completed");
+      if(!keep) continue;
+      r.seg = seg; r.t = Date.parse(r.recordedAt); recs.push(r);
+    }
+  }
+  recs.sort((a,b)=>a.t-b.t);
+  const idx = { total, segs, recs, exchanges: [], byRelay: new Map(), reqByThread: new Map(), inputs: [], tokens: new Map(), mcp: [], losses: [], finals: [] };
+  for(const r of recs){
+    const c = r.correlation || {};
+    if(r.recordType === "provider.exchange"){
+      const x = { rec: r, t: r.t, dir: r.attributes?.direction, thread: c.threadId, turn: c.turnId, relay: c.relayRequestId, role: r.attributes?.exchangeRole };
+      if(x.role && x.role !== "active") continue;
+      idx.exchanges.push(x);
+      if(x.dir === "request"){ (idx.reqByThread.get(x.thread) || idx.reqByThread.set(x.thread, []).get(x.thread)).push(x); }
+      else if(x.relay) idx.byRelay.set(x.relay, x);
+    } else if(r.recordType === "protocol.frame"){
+      const v = await payloadOf(r); const p = v?.params; if(!p?.tokenUsage) continue;
+      (idx.tokens.get(p.threadId) || idx.tokens.set(p.threadId, []).get(p.threadId)).push({ t: r.t, turn: p.turnId, last: p.tokenUsage.last, win: p.tokenUsage.modelContextWindow });
+    } else if(r.recordType === "conversation.user_input"){
+      idx.inputs.push(r);
+    } else if(r.recordType === "mcp.call" || r.recordType === "mcp.result"){
+      idx.mcp.push(r);
+    } else if(r.recordType === "conversation.assistant_output") idx.finals.push(r);
+    else if(r.recordType === "capture.loss") idx.losses.push(r);
+  }
+  setStatus(`解析 ${idx.inputs.length} 条输入…`);
+  const parsed = [];
+  for(const r of idx.inputs){
+    const v = await payloadOf(r);
+    const text = (v?.input || []).map(i => typeof i === "object" ? (i.text ?? "") : String(i)).join("\n");
+    const f = parseWorkonInput(text);
+    f.rec = r; f.t = r.t; f.thread = r.correlation?.threadId; f.raw = text;
+    const list = idx.reqByThread.get(f.thread) || [];
+    const q = list.find(x => x.t >= f.t - 1500);
+    f.turn = q?.turn;
+    parsed.push(f);
+  }
+  idx.inputs = parsed;
+  idx.threadRole = new Map();
+  for(const f of parsed){
+    const cur = idx.threadRole.get(f.thread), role = f.isTask ? "任务" : ["arrangement", "report"].includes(f.kind) ? "沟通" : f.isUser || f.kind === "external" || f.kind === "coordination" ? "路由" : f.cat === "memory" ? "记忆" : null;
+    const rank = r => ["任务", "沟通", "路由", "记忆"].indexOf(r);
+    if(role && (!cur || rank(role) < rank(cur))) idx.threadRole.set(f.thread, role);
+  }
+  return idx;
+}
+// Independent triggers start a processing chain; derived inputs are hand-offs inside one.
+const CAT = { user: "用户消息", external: "外部消息", followUp: "定时跟进", state: "任务状态变化", recovery: "失败恢复", derived: "内部流转", memory: "记忆学习", other: "非 workon 输入" };
+const DERIVED = { arrangement: "路由安排 → 沟通", report: "任务报告 → 沟通", coordination: "任务协调 → 路由", message: "派给任务/内部消息", state: "任务状态", followUp: "跟进" };
+function parseWorkonInput(txt){
+  const g = re => { const m = txt.match(re); return m ? m[1] : undefined; };
+  const f = { isWorkon: txt.includes("<workon_input>") };
+  f.kind = g(/\nkind: "([\w-]+)"/); f.trigger = g(/\ntrigger: "([\w-]+)"/); f.inputRef = g(/inputRef: "([^"]+)"/);
+  f.messageId = g(/\nmessageId: "([^"]+)"/); f.authorKind = g(/\nauthor: \{"kind":"(\w+)"/);
+  f.taskIds = [];
+  const tm = txt.match(/\ntaskIds: (\[[^\]]*\])/); if(tm){ try{ f.taskIds = JSON.parse(tm[1]); }catch{} }
+  const tid = txt.match(/## 当前制作任务 \(task\)\nid: "([^"]+)"/); if(tid){ f.taskIds.push(tid[1]); f.isTask = true; }
+  const tb = txt.match(/\ntext: \|\n((?: {2}.*(?:\n|$))+)/);
+  f.text = tb ? tb[1].replace(/^ {2}/gm, "").trim() : txt.replace(/<\/?workon_input>/g,"").trim();
+  f.isUser = f.authorKind === "user" && f.kind === "message";
+  // trigger values come from workon-model-context.ts; kind values from CollaborationInput in workon-collaboration-records.ts
+  f.cat = !f.isWorkon ? (/\\?"action\\?":\\?"learn\\?"/.test(txt) ? "memory" : "other") : f.trigger === "failureRecovery" ? "recovery" : f.trigger === "scheduledFollowUp" ? "followUp"
+    : f.trigger === "taskStateChange" ? "state" : f.isUser ? "user" : f.kind === "external" ? "external" : "derived";
+  f.root = f.cat !== "derived" && f.cat !== "memory";
+  if(f.cat === "external"){
+    // External batches carry their items as JSON inside the text block.
+    try{
+      const items = JSON.parse(f.text.slice(f.text.indexOf("{"), f.text.lastIndexOf("}") + 1)).items || [];
+      const sources = [...new Set(items.map(i => (i.source?.objectKey || "").split(":")[0]).filter(Boolean))];
+      f.text = `${sources.join("/") || "外部"} ${items.length} 条：` + items.map(i => (i.deleted ? "[已删除] " : "") + (i.text ?? "")).join(" / ");
+    }catch{}
+  }
+  f.catLabel = f.cat === "derived" ? (DERIVED[f.kind] || "内部消息") : CAT[f.cat];
+  return f;
+}
+
+/* ================= selection → related turns ================= */
+function relatedTurns(entry){
+  const I = IDX.inputs;
+  const next = I.find(x => x.root && x !== entry && x.t > entry.t + 1000 && (entry.cat === "user"
+    ? x.cat === "user" && x.messageId !== entry.messageId
+    : x.thread === entry.thread || x.taskIds.some(t => entry.taskIds.includes(t))));
+  const tEnd = next ? next.t : Infinity;
+  const turns = new Map();   // turn -> input that started it
+  const add = x => { if(x.turn && !turns.has(x.turn)) turns.set(x.turn, x); };
+  if(entry.messageId) I.filter(x => x.messageId === entry.messageId).forEach(add);
+  else add(entry);
+  if(!entry.isWorkon) return { turns, tEnd };
+  const tasks = new Set();
+  for(let round = 0; round < 4; round++){
+    const before = turns.size + tasks.size;
+    for(const x of turns.values()) x.taskIds.forEach(t => tasks.add(t));
+    for(const r of IDX.mcp){
+      if(r.recordType !== "mcp.result" || !turns.has(r.correlation?.turnId)) continue;
+      for(const m of (r._s ??= JSON.stringify(r.payload)).matchAll(/taskId[\\"]*:[\\"]*([0-9a-f-]{36})/g)) tasks.add(m[1]);
+    }
+    I.filter(x => x.t >= entry.t - 1000 && x.t < tEnd && x.taskIds.some(t => tasks.has(t))).forEach(add);
+    if(turns.size + tasks.size === before) break;
+  }
+  return { turns, tEnd, tasks };
+}
+
+/* ================= request reconstruction ================= */
+const MODEL_TYPES = new Set(["reasoning","custom_tool_call","function_call","local_shell_call","web_search_call","image_generation_call","computer_call","mcp_call","tool_search_call"]);
+const isModelItem = it => MODEL_TYPES.has(it?.type) || (it?.type === "message" && it.role === "assistant");
+const isOutputItem = it => /_output$/.test(it?.type || "");
+const bodyCache = new Map();
+async function requestBody(x){
+  if(bodyCache.has(x)) return bodyCache.get(x);
+  const v = await payloadOf(x.rec);
+  const b = typeof v === "string" ? (()=>{ try{ return JSON.parse(v); }catch{ return {}; } })() : (v || {});
+  bodyCache.set(x, b); return b;
+}
+function parseResponse(v){
+  const out = { items: [], usage: null, redacted: 0, lines: 0 };
+  if(v && typeof v === "object"){ out.items = v.output || []; out.usage = v.usage || null; return out; }
+  const byIndex = new Map();
+  for(const line of String(v || "").split("\n")){
+    if(!line) continue; out.lines++;
+    if(line.includes("[REDACTED]")) out.redacted++;
+    if(!line.startsWith("data: ")) continue;
+    let d; try{ d = JSON.parse(line.slice(6)); }catch{ continue; }
+    if(d.response?.usage) out.usage = d.response.usage;
+    if(d.type === "response.completed" && Array.isArray(d.response?.output)) out.completed = d.response.output;
+    if(d.item && d.output_index != null && (d.item.status === "completed" || !byIndex.has(d.output_index))) byIndex.set(d.output_index, d.item);
+  }
+  out.items = out.completed || [...byIndex.entries()].sort((a,b)=>a[0]-b[0]).map(e=>e[1]);
+  return out;
+}
+
+async function buildModel(entry, setStatus){
+  const { turns, tEnd } = relatedTurns(entry);
+  const reqs = IDX.exchanges.filter(x => x.dir === "request" && turns.has(x.turn)).sort((a,b)=>a.t-b.t);
+  const threads = [...new Set(reqs.map(x => x.thread))];
+  const R = [];
+  let done = 0;
+  const total = threads.reduce((a, th) => { const all = IDX.reqByThread.get(th) || [], m = reqs.filter(x => x.thread === th); return a + all.indexOf(m.at(-1)) - all.indexOf(m[0]) + 3; }, 0);
+  for(const th of threads){
+    // Walk every request of the thread from just before the first selected one to just after the last,
+    // because the same thread may serve other turns in between and each diff needs its true neighbour.
+    const all = IDX.reqByThread.get(th) || [];
+    const mine = new Set(reqs.filter(x => x.thread === th));
+    const lo = Math.max(0, all.findIndex(x => mine.has(x)) - 1);
+    let hi = all.length - 1; while(hi > 0 && !mine.has(all[hi])) hi--; hi = Math.min(all.length - 1, hi + 1);
+    let prevKeys = null;
+    const local = [];
+    for(let i = lo; i <= hi; i++){
+      const x = all[i];
+      setStatus(`解码请求 ${++done}/${total}…`);
+      const body = await requestBody(x);
+      const input = Array.isArray(body.input) ? body.input : [];
+      const keys = input.map(it => JSON.stringify(it));
+      let common = 0, rewritten = false;
+      if(prevKeys){
+        const n = Math.min(keys.length, prevKeys.length);
+        while(common < n && keys[common] === prevKeys[common]) common++;
+        rewritten = common < prevKeys.length * 0.7;   // most of the old context changed: compaction or history replacement
+      }
+      local.push({ x, input, common, prevLen: prevKeys ? prevKeys.length : 0, rewritten, first: !prevKeys, selected: mine.has(x) });
+      prevKeys = keys;
+      bodyCache.delete(x);
+    }
+    for(let i = 0; i < local.length; i++){
+      const L = local[i]; if(!L.selected) continue;
+      if(L.first && L.x !== all[0]) L.unknownPrev = true;
+      const nxt = local[i+1];
+      const fresh = L.rewritten || L.first ? L.input : L.input.slice(L.common);
+      L.fresh = fresh;
+      const resp = IDX.byRelay.get(L.x.relay);
+      const pr = resp ? parseResponse(await payloadOf(resp.rec)) : { items: [], usage: null, redacted: 0, lines: 0 };
+      let outputs = nxt && !nxt.rewritten ? nxt.input.slice(Math.max(nxt.common, L.input.length)).filter(isModelItem) : [];
+      if(!outputs.length) outputs = pr.items;
+      const q = {
+        thread: th, turn: L.x.turn, start: L.x.t, end: resp ? resp.t : L.x.t, nextReqT: nxt ? nxt.x.t : null,
+        inputItems: L.rewritten || L.first ? fresh : fresh.filter(it => !isModelItem(it)),
+        rewritten: L.rewritten, first: L.first, prevSelected: !!local[i-1]?.selected, changedOld: L.first || L.rewritten ? 0 : L.prevLen - L.common,
+        inputCount: L.input.length, outputItems: outputs,
+        usage: pr.usage, redacted: pr.redacted, respLines: pr.lines, hasResponse: !!resp,
+        model: L.x.rec.attributes?.modelId, bytes: L.x.rec.attributes?.originalBytes
+      };
+      R.push(q);
+    }
+  }
+  for(const q of R){
+    if(q.outputItems.length) continue;
+    const f = IDX.finals.find(r => r.correlation?.turnId === q.turn && r.t >= q.start && (q.nextReqT == null || r.t <= q.nextReqT));
+    const v = f && await payloadOf(f);
+    const txt = v?.params?.item?.text ?? v?.item?.text;
+    if(txt != null) q.outputItems = [{ type: "message", role: "assistant", content: [{ text: txt }] }];
+  }
+  R.sort((a,b)=>a.start-b.start);
+  // tool results: match *_output items in later requests of the same thread by call_id
+  const calls = new Map();
+  for(const q of R){
+    q.calls = [];
+    q.outputs = q.outputItems.map(it => {
+      if(it.type === "reasoning") return { kind: "reasoning", summary: (it.summary || []).map(s=>s.text).join("\n"), encrypted: !!it.encrypted_content };
+      if(it.type === "message") return { kind: "text", text: textOf(it.content) };
+      const code = it.input ?? it.arguments ?? JSON.stringify(it.action ?? it, null, 1);
+      const [label, cat] = labelCall(it.name || it.type, code);
+      const o = { kind: "call", tool: it.name || it.type, code: typeof code === "string" ? code : JSON.stringify(code, null, 1), label, cat, callId: it.call_id };
+      if(it.call_id) calls.set(q.thread + "|" + it.call_id, { o, q });
+      q.calls.push(o); return o;
+    });
+  }
+  for(const q of R){
+    q.inputs = [];
+    for(const it of q.inputItems){
+      if(isOutputItem(it)){
+        const hit = calls.get(q.thread + "|" + it.call_id);
+        const raw = textOf(it.output);
+        if(hit && hit.o.result == null){
+          Object.assign(hit.o, { result: prettyResult(raw), resultChars: raw.length, doneAt: q.start, fromQ: hit.q });
+          const m = raw.match(/original token count: (\d+)/); if(m) hit.o.truncatedFrom = +m[1];
+          if(/Script running with cell ID/.test(raw)) hit.o.yielded = true;
+          if(/outcome\\*"\s*:\s*\\*"rejected/.test(raw)) hit.o.rejected = true;
+        }
+        q.inputs.push({ kind: "toolResult", call: hit?.o, from: hit?.q, raw });
+      } else q.inputs.push(describeInput(it));
+    }
+  }
+  // tokens: prefer the provider usage, else the Runtime tokenUsage frame that follows the response
+  for(const q of R){
+    const u = q.usage;
+    if(u) q.tokens = { input: u.input_tokens || 0, cached: u.input_tokens_details?.cached_tokens || 0, output: u.output_tokens || 0, reasoning: u.output_tokens_details?.reasoning_tokens || 0 };
+    else {
+      const f = (IDX.tokens.get(q.thread) || []).find(f => f.t >= q.end - 2000 && (q.nextReqT == null || f.t <= q.nextReqT + 2000));
+      q.tokens = f ? { input: f.last.inputTokens || 0, cached: f.last.cachedInputTokens || 0, output: f.last.outputTokens || 0, reasoning: f.last.reasoningOutputTokens || 0 } : { input: 0, cached: 0, output: 0, reasoning: 0 };
+    }
+    q.window = (IDX.tokens.get(q.thread) || []).find(f => f.win)?.win || null;
+    const lastCall = q.calls.at(-1);
+    q.call = lastCall; q.text = q.outputs.find(o => o.kind === "text");
+    q.done = Math.max(q.end, ...q.calls.map(c => c.doneAt || q.end));
+    q.cat = lastCall ? lastCall.cat : q.rewritten ? "compact" : "final";
+    q.label = lastCall ? (q.calls.length > 1 ? `${lastCall.label} 等 ${q.calls.length} 个调用` : lastCall.label) : q.text ? "文本回复" : q.hasResponse ? "无输出记录" : "无响应（可能被中断）";
+  }
+  R.forEach((q, i) => q.id = i);
+  // lanes: one per thread, role from the inputs that started its turns
+  const lanes = threads.map(th => {
+    const role = IDX.threadRole.get(th) || "会话";
+    return { th, name: `${role} ·${th.slice(-4)}`, first: Math.min(...R.filter(q => q.thread === th).map(q => q.start)) };
+  }).sort((a,b) => a.first - b.first);
+  const laneName = Object.fromEntries(lanes.map(l => [l.th, l.name]));
+  const per = {}; R.forEach(q => q.n = (per[q.thread] = (per[q.thread] || 0) + 1));
+  // what the user saw: workon_send_message calls in these turns
+  const sends = [];
+  for(const r of IDX.mcp){
+    if(r.recordType !== "mcp.call" || !turns.has(r.correlation?.turnId)) continue;
+    const v = await payloadOf(r); const it = v?.item || v?.params?.item || {};
+    if(it.tool !== "workon_send_message") continue;
+    const a = it.arguments || {};
+    sends.push({ t: r.t, turn: r.correlation.turnId, thread: r.correlation.threadId, text: a.content ?? a.text ?? null, alt: a.alt, type: a.type, args: a,
+      q: [...R].reverse().find(q => q.thread === r.correlation.threadId && q.start <= r.t) });
+  }
+  sends.sort((a,b) => a.t - b.t);
+  const losses = IDX.losses.filter(r => r.t >= entry.t && r.t <= (isFinite(tEnd) ? tEnd : Infinity));
+  return { entry, R, lanes, laneName, sends, losses, t0: entry.t, tEnd };
+}
+
+function describeInput(it){
+  if(it.type === "message"){
+    const txt = textOf(it.content);
+    const tag = (txt.match(/^\s*<([\w-]+)/) || [])[1];
+    const role = { developer: "开发者消息", user: "用户侧消息", system: "系统消息" }[it.role] || it.role;
+    return { kind: tag === "workon_input" ? "workon_input" : it.role, title: role + (tag ? ` <${tag}>` : ""), text: txt };
+  }
+  if(it.type === "additional_tools"){
+    const names = [];
+    const walk = ts => (ts || []).forEach(x => x.tools ? walk(x.tools) : names.push("### " + (x.name || "") + "\n" + (x.description || "")));
+    walk(it.tools);
+    return { kind: "tools", title: `工具定义（${names.length} 个）`, text: names.join("\n\n") };
+  }
+  if(isModelItem(it)){
+    if(it.type === "reasoning") return { kind: "history", title: "历史模型输出 · 推理", text: (it.summary || []).map(x => x.text).join("\n") || "（加密）" };
+    if(it.type === "message") return { kind: "history", title: "历史模型输出 · 文本", text: textOf(it.content) };
+    return { kind: "history", title: `历史模型输出 · 调用 ${it.name || it.type}`, text: String(it.input ?? it.arguments ?? JSON.stringify(it, null, 1)) };
+  }
+  if(/compact/i.test(it.type || "")) return { kind: "compaction", title: "上下文压缩项 " + it.type, text: JSON.stringify(it, null, 1) };
+  return { kind: "other", title: it.type || "未知项", text: JSON.stringify(it, null, 1) };
+}
+function labelCall(name, code){
+  const s = String(code || "");
+  if(name === "wait") return ["wait（轮询后台脚本）", "wait"];
+  if(name !== "exec") return [name, /^mcp__workon__|^workon_/.test(name) ? "workon" : "other"];
+  if(/ALL_TOOLS/.test(s)) return ["枚举工具清单 ALL_TOOLS", "discover"];
+  if(/get_connector_tools/.test(s)) return ["get_connector_tools", "discover"];
+  if(/--help/.test(s)) return [`--help ×${s.match(/--help/g).length}`, "discover"];
+  const subs = [...new Set(s.match(/"\+[a-z-]+"/g) || [])].map(x => x.slice(1, -1));
+  if(/call_connector_tool/.test(s)) return [`connector ${subs.slice(0, 3).join(" ")}`.trim() + (s.length > 1500 ? "（脚本）" : ""), "connector"];
+  const names = [...new Set([...s.matchAll(/tools\.(?:mcp__\w+?__)?(\w+)\s*\(/g)].map(m => m[1]))];
+  const w = names.find(n => n.startsWith("workon_")); if(w) return [w, "workon"];
+  if(names.includes("exec_command")){ const m = s.match(/cmd\s*:\s*["'`]([^"'`\n]{0,60})/); return [`shell ${m ? m[1] : ""}`.trim(), "shell"]; }
+  if(names.length) return [names.slice(0, 2).join(", "), "other"];
+  if(/\bload\(/.test(s)) return ["本地脚本（读缓存）", "local"];
+  return ["exec 脚本", "local"];
+}
+function prettyResult(s){
+  return s.split("\n").map(part => {
+    const p = part.trim();
+    if(!p.startsWith('{"content"')) return part;
+    try{
+      const v = JSON.parse(p);
+      let inner = (v.content || []).map(c => c.text || "").join("\n");
+      for(let i = 0; i < 3; i++){
+        let j; try{ j = JSON.parse(inner); }catch{ break; }
+        if(typeof j === "string"){ inner = j; continue; }
+        inner = JSON.stringify(j, null, 1); break;
+      }
+      return (v.isError ? "[isError] " : "") + inner;
+    }catch{ return part; }
+  }).join("\n");
+}
+
+/* ================= checks ================= */
+function runChecks(M){
+  const { R, sends } = M, F = [];
+  const ids = a => a.map(q => q.id);
+  const tr = R.filter(q => q.calls.some(c => c.truncatedFrom));
+  if(tr.length) F.push({ sev: "高", title: `${tr.length} 次工具输出被截断`, body: "截断前最大 " + kfmt(Math.max(...tr.flatMap(q => q.calls.map(c => c.truncatedFrom || 0)))) + " token。超大输出直接进入上下文，会推高后续所有请求的输入。", q: ids(tr) });
+  const rw = R.filter(q => q.rewritten);
+  if(rw.length) F.push({ sev: "高", title: `上下文被重写 ${rw.length} 次（压缩或历史替换）`, body: "这次请求的输入不再以上一次请求的输入为前缀，通常是压缩触发。", q: ids(rw) });
+  const peak = R.reduce((m, q) => q.tokens.input > (m?.tokens.input || 0) ? q : m, null);
+  if(peak?.window && peak.tokens.input / peak.window > .8) F.push({ sev: "高", title: `峰值上下文达到窗口的 ${Math.round(peak.tokens.input / peak.window * 100)}%`, body: `${kfmt(peak.tokens.input)} / ${kfmt(peak.window)}`, q: [peak.id] });
+  const rj = R.filter(q => q.calls.some(c => c.rejected));
+  if(rj.length) F.push({ sev: "中", title: `${rj.length} 次工具调用被拒绝`, body: "返回 outcome=rejected，模型需要再来一轮。", q: ids(rj) });
+  const wt = R.filter(q => q.calls.some(c => c.cat === "wait"));
+  if(wt.length) F.push({ sev: "中", title: `wait 轮询 ${wt.length} 次，累计输入 ${kfmt(wt.reduce((a, q) => a + q.tokens.input, 0))} token`, body: "每次轮询都带着完整上下文请求模型，只为等后台脚本。", q: ids(wt) });
+  const ds = R.filter(q => q.calls.some(c => c.cat === "discover"));
+  if(ds.length >= 3) F.push({ sev: "中", title: `工具发现调用 ${ds.length} 次（ALL_TOOLS / --help / get_connector_tools）`, body: "模型在运行中反复摸索工具用法。", q: ids(ds) });
+  const cold = R.filter(q => q.tokens.input > 10000 && q.tokens.cached / q.tokens.input < .1);
+  if(cold.length) F.push({ sev: "低", title: `${cold.length} 次请求缓存命中低于 10%`, body: "输入超过 10k token 但几乎没有命中缓存，前缀可能每轮都在变化。", q: ids(cold) });
+  const rep = R.filter(q => q.calls.some(c => /workon_report\s*\(\s*\{[^}]*type\s*:\s*["']attachment/.test(c.code) && !/\btext\s*:/.test(c.code)));
+  if(rep.length) F.push({ sev: "高", title: "workon_report 只带附件、没有摘要文本", body: "沟通会话只能转发文件，任务的结论不会上屏。", q: ids(rep) });
+  const red = R.filter(q => q.respLines && q.redacted / q.respLines > .3);
+  if(red.length) F.push({ sev: "低", title: `${red.length} 次响应体超过 30% 的行被脱敏为 [REDACTED]`, body: "凭证扫描误伤了模型响应流；模型输出改由下一次请求的输入还原。", q: ids(red) });
+  const noResp = R.filter(q => !q.hasResponse);
+  if(noResp.length) F.push({ sev: "低", title: `${noResp.length} 次请求没有对应的响应记录`, body: "可能是请求失败、被取消或响应未被导入。", q: ids(noResp) });
+  if(!sends.length) F.push({ sev: "中", title: "没有找到 workon_send_message 调用", body: "这条输入在本 trace 中没有可见的上屏消息（也可能发生在 exec 内部未被记录为 mcp.call）。", q: [] });
+  if(M.losses.length) F.push({ sev: "中", title: `${M.losses.length} 条 capture.loss 记录`, body: "这段时间有 trace 数据丢失。", q: [] });
+  return F;
+}
+
+/* ================= rendering ================= */
+const $ = id => document.getElementById(id);
+const fmt = s => { s = Math.round(s); return (s >= 60 ? Math.floor(s / 60) + "m" : "") + String(s % 60).padStart(s >= 60 ? 2 : 1, "0") + "s"; };
+const kfmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+const clock = t => new Date(t).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const ns = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent, text) => { const e = document.createElementNS(ns, tag); for(const k in attrs) e.setAttribute(k, attrs[k]); if(text != null) e.textContent = text; parent && parent.appendChild(e); return e; };
+const h = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for(const k in props){ if(k === "class") e.className = props[k]; else if(k.startsWith("on")) e[k] = props[k]; else if(props[k] != null) e.setAttribute(k, props[k]); } kids.flat().forEach(k => k != null && e.append(k)); return e; };
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const KIND = { discover: ["工具发现", "--discover"], connector: ["连接器调用", "--connector"], workon: ["workon 业务工具", "--workon"], shell: ["shell 命令", "--shell"], local: ["本地脚本", "--local"], wait: ["wait 轮询", "--wait"], other: ["其他工具", "--other"], compact: ["上下文重写", "--compact"], final: ["文本回复", "--final"] };
+
+let cats = null;
+function renderCatChips(){
+  const count = {}; IDX.inputs.forEach(x => count[x.cat] = (count[x.cat] || 0) + 1);
+  const present = Object.keys(CAT).filter(k => count[k]);
+  const workon = present.some(k => !["other", "memory"].includes(k));
+  cats = new Set(present.filter(k => workon ? !["derived", "memory", "other"].includes(k) : true));
+  $("catChips").replaceChildren(...present.map(k => h("button", { class: "chip" + (cats.has(k) ? " on" : ""), title: { derived: "由其他触发派生的交接输入：路由安排、任务报告、派给任务的指令等", memory: "回合结束后的后台记忆学习（action=learn），不由用户直接触发" }[k] || "", onclick: e => {
+    cats.has(k) ? cats.delete(k) : cats.add(k); e.currentTarget.classList.toggle("on", cats.has(k)); renderPicker();
+  } }, `${CAT[k]} ${count[k]}`)));
+}
+function renderPicker(){
+  const q = $("q").value.trim().toLowerCase();
+  const seen = new Set();
+  let rows = IDX.inputs.filter(x => cats.has(x.cat));
+  rows = rows.filter(x => { if(x.cat === "user"){ if(seen.has(x.messageId)) return false; seen.add(x.messageId); } return true; });
+  if(q) rows = rows.filter(x => x.text.toLowerCase().includes(q));
+  rows = rows.slice().reverse();
+  $("picker").replaceChildren(...(rows.length ? rows.slice(0, 500).map(x => h("div", { class: "pick", onclick: () => openEntry(x) },
+    h("span", { class: "t" }, clock(x.t)), h("span", { class: "x" }, x.text.slice(0, 300) || "（空）"),
+    h("span", { class: "k", "data-root": x.root && x.cat !== "other" ? "" : null }, x.catLabel))) : [h("div", { class: "note", style: "margin:12px" }, "没有匹配的输入")]));
+}
+
+let M = null, selected = null, filter = "all";
+async function openEntry(entry){
+  $("pickerSec").classList.add("hidden"); $("view").classList.remove("hidden");
+  const st = s => $("viewStatus").textContent = s;
+  ["kpis","screen","gantt","chips","list","detail","ctx","cost","findings"].forEach(id => $(id).replaceChildren());
+  $("usermsg").textContent = entry.text;
+  $("trigInfo").textContent = `— ${entry.catLabel}` + (entry.trigger ? ` · trigger=${entry.trigger}` : "") + (entry.kind ? ` · kind=${entry.kind}` : "") + ` · ${clock(entry.t)}`;
+  try{
+    M = await buildModel(entry, st);
+    st(`${M.R.length} 次模型请求 · ${M.lanes.length} 个会话线程`);
+    render();
+  }catch(e){ console.error(e); $("viewStatus").textContent = "解析失败：" + e.message; }
+  scrollTo(0, 0);
+}
+
+function render(){
+  const { R, lanes, laneName, sends, t0 } = M;
+  if(!R.length){ $("viewStatus").textContent = "这条输入没有找到对应的模型请求（provider.exchange）。"; return; }
+  const rel = t => (t - t0) / 1000;
+  R.forEach(q => { q.s = rel(q.start); q.e = rel(q.end); q.d = rel(q.done); });
+  const byThread = {}; R.forEach(q => (byThread[q.thread] ??= []).push(q));
+  R.forEach(q => q.prev = q.prevSelected ? byThread[q.thread][q.n - 2] : null);
+  const endS = Math.max(...R.map(q => q.d), ...sends.map(s => rel(s.t)));
+  const sum = k => R.reduce((a, q) => a + q.tokens[k], 0);
+  const main = lanes.map(l => byThread[l.th]).sort((a, b) => b.length - a.length)[0];
+  const llmT = main.reduce((a, q) => a + (q.e - q.s), 0), toolT = main.reduce((a, q) => a + Math.max(0, q.d - q.e), 0);
+  const peak = Math.max(...R.map(q => q.tokens.input));
+  [[fmt(endS), "端到端耗时"], [sends[0] ? fmt(rel(sends[0].t)) : "—", "首条上屏消息"], [R.length, "模型请求"],
+   [kfmt(sum("input")), "输入 token · 缓存 " + (sum("input") ? Math.round(sum("cached") / sum("input") * 100) : 0) + "%"],
+   [(llmT + toolT) ? Math.round(llmT / (llmT + toolT) * 100) + "%" : "—", "主会话耗时花在模型推理"], [kfmt(peak), "峰值上下文"]]
+    .forEach(([v, l]) => $("kpis").append(h("div", { class: "kpi" }, h("b", {}, String(v)), h("span", {}, l))));
+
+  // on-screen output
+  const jump = q => q ? h("span", { class: "link", onclick: () => select(q.id, true) }, `#${q.id} ${laneName[q.thread]}`) : "";
+  if(!sends.length) $("screen").append(h("div", { class: "note" }, "没有找到 workon_send_message 调用"));
+  sends.forEach(s => $("screen").append(h("div", { class: "bubble" },
+    h("div", { class: "meta" }, `${fmt(rel(s.t))} · ${s.type || "text"} · 由 `, jump(s.q), " 发送"),
+    s.text != null ? String(s.text) : s.alt ? `📎 附件：${s.alt}` : JSON.stringify(s.args, null, 1))));
+
+  // gantt
+  const W = 1180, L = 120, RP = 16, end = Math.max(30, Math.ceil(endS / 30) * 30), X = s => L + (W - L - RP) * s / end;
+  const step = end > 1800 ? 300 : end > 600 ? 60 : end > 120 ? 30 : 10;
+  const g = $("gantt"), laneH = 34, gTop = 22, H = gTop + lanes.length * laneH + 10;
+  g.setAttribute("viewBox", `0 0 ${W} ${H}`); g.setAttribute("width", W);
+  M.hl = [el("rect", { y: gTop - 4, height: lanes.length * laneH, fill: css("--hi"), width: 0 }, g)];
+  for(let s = 0; s <= end; s += step){ el("line", { x1: X(s), x2: X(s), y1: gTop - 6, y2: H - 8, stroke: css("--grid") }, g); el("text", { x: X(s), y: 12, "text-anchor": "middle" }, g, fmt(s)); }
+  sends.forEach(s => el("line", { x1: X(rel(s.t)), x2: X(rel(s.t)), y1: gTop - 6, y2: H - 8, stroke: css("--workon"), "stroke-dasharray": "3 3" }, g));
+  const tip = $("tip"); M.blocks = {};
+  lanes.forEach((ln, i) => {
+    const y = gTop + i * laneH;
+    el("text", { x: 8, y: y + laneH / 2 + 4, "font-size": 12, style: "fill:var(--ink)" }, g, ln.name);
+    el("line", { x1: L, x2: W - RP, y1: y + laneH / 2, y2: y + laneH / 2, stroke: css("--grid") }, g);
+    byThread[ln.th].forEach(q => {
+      const gg = el("g", { class: "blk" }, g); M.blocks[q.id] = gg;
+      el("rect", { x: X(q.s), y: y + 9, width: Math.max(2, X(q.e) - X(q.s)), height: laneH - 18, rx: 2, fill: q.cat === "compact" ? css("--compact") : css("--llm") }, gg);
+      if(q.call){
+        const bad = q.calls.some(c => c.rejected || c.truncatedFrom);
+        el("rect", { x: X(q.e), y: y + 5, width: Math.max(3, X(q.d) - X(q.e)), height: laneH - 10, rx: 2, fill: css(KIND[q.cat][1]), stroke: bad ? css("--sev-h") : "none", "stroke-width": 1.5 }, gg);
+      }
+      gg.addEventListener("click", () => select(q.id, true));
+      gg.addEventListener("mousemove", ev => {
+        const t = q.tokens, rows = [["开始", fmt(q.s)], ["模型推理", (q.e - q.s).toFixed(1) + "s"], ["工具执行", Math.max(0, q.d - q.e).toFixed(1) + "s"],
+          ["输入 token", kfmt(t.input) + (t.input ? "（缓存 " + Math.round(t.cached / t.input * 100) + "%）" : "")], ["输出 / 推理", t.output + " / " + t.reasoning]];
+        tip.replaceChildren(h("b", {}, `#${q.id} ${q.label}`), ...rows.map(([k, v]) => h("div", { class: "r" }, k, h("em", {}, v))));
+        tip.style.display = "block"; tip.style.left = Math.min(ev.clientX + 14, innerWidth - 360) + "px"; tip.style.top = (ev.clientY + 14) + "px";
+      });
+      gg.addEventListener("mouseleave", () => tip.style.display = "none");
+    });
+  });
+  $("legend").innerHTML = `<span><i style="background:var(--llm)"></i>模型推理</span>` + Object.values(KIND).map(([n, v]) => `<span><i style="background:var(${v})"></i>${n}</span>`).join("") + `<span><i style="border:1.5px solid var(--sev-h)"></i>被截断 / 被拒</span><span><i style="border-left:2px dashed var(--workon)"></i>上屏消息</span>`;
+
+  // list
+  filter = "all";
+  [["all", "全部", R.length], ...lanes.map(l => [l.th, l.name, byThread[l.th].length])].forEach(([k, n, c]) =>
+    $("chips").append(h("button", { class: "chip" + (k === "all" ? " on" : ""), "data-k": k, onclick: () => { filter = k; $("chips").querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x.dataset.k === k)); renderList(); } }, `${n} ${c}`)));
+  renderList(); select(0, false);
+
+  // context chart for the busiest thread
+  const c = $("ctx"), CH = 190, cTop = 10, cBot = 24;
+  $("ctxTitle").textContent = `— ${laneName[main[0].thread]} 每次请求的输入 token` + (main[0].window ? `；虚线为上下文窗口 ${kfmt(main[0].window)}` : "");
+  c.setAttribute("viewBox", `0 0 ${W} ${CH}`); c.setAttribute("width", W);
+  const win = main.find(q => q.window)?.window || 0, maxY = Math.max(peak, win) * 1.08 || 1, Y = v => cTop + (CH - cTop - cBot) * (1 - v / maxY);
+  M.hl.push(el("rect", { y: cTop, height: CH - cTop - cBot, fill: css("--hi"), width: 0 }, c));
+  for(let i = 0; i <= 5; i++){ const v = maxY / 5 * i; el("line", { x1: L, x2: W - RP, y1: Y(v), y2: Y(v), stroke: css("--grid") }, c); el("text", { x: L - 6, y: Y(v) + 4, "text-anchor": "end" }, c, kfmt(Math.round(v))); }
+  for(let s = 0; s <= end; s += step) el("text", { x: X(s), y: CH - 6, "text-anchor": "middle" }, c, fmt(s));
+  if(win) el("line", { x1: L, x2: W - RP, y1: Y(win), y2: Y(win), stroke: css("--sev-h"), "stroke-dasharray": "5 4" }, c);
+  const path = main.map((q, i) => (i ? "L" : "M") + X(q.s).toFixed(1) + "," + Y(q.tokens.input).toFixed(1)).join("");
+  el("path", { d: path + `L${X(main.at(-1).s)},${Y(0)}L${X(main[0].s)},${Y(0)}Z`, fill: css("--ctxfill") }, c);
+  el("path", { d: path, fill: "none", stroke: css("--ctx"), "stroke-width": 1.8 }, c);
+  main.forEach(q => { const p = el("circle", { cx: X(q.s), cy: Y(q.tokens.input), r: 3, fill: q.rewritten ? css("--compact") : css("--ctx"), style: "cursor:pointer" }, c); el("title", {}, p, `#${q.id} ${q.label} · ${kfmt(q.tokens.input)}`); p.addEventListener("click", () => select(q.id, true)); });
+
+  // cost table
+  $("cost").innerHTML = "<tr><th>会话</th><th>模型请求</th><th>输入 token</th><th>缓存命中</th><th>输出 token</th><th>其中推理</th></tr>" +
+    lanes.map(l => { const a = byThread[l.th], s = k => a.reduce((x, q) => x + q.tokens[k], 0); return `<tr><td>${l.name}</td><td>${a.length}</td><td>${kfmt(s("input"))}</td><td>${s("input") ? Math.round(s("cached") / s("input") * 100) : 0}%</td><td>${kfmt(s("output"))}</td><td>${kfmt(s("reasoning"))}</td></tr>`; }).join("");
+
+  // checks
+  const F = runChecks(M);
+  if(!F.length) $("findings").append(h("div", { class: "note" }, "没有触发任何规则"));
+  F.forEach(f => {
+    const d = h("div", { class: "f", "data-sev": f.sev }, h("h3", {}, h("span", { class: "tag" }, f.sev), f.title, f.q.length ? h("span", { class: "sub" }, ` · ${f.q.slice(0, 8).map(i => "#" + i).join(" ")}${f.q.length > 8 ? " …" : ""}`) : null), h("p", {}, f.body));
+    d.onclick = () => {
+      const on = !d.classList.contains("active");
+      $("findings").querySelectorAll(".f").forEach(x => x.classList.remove("active"));
+      const qs = f.q.map(i => R[i]);
+      const a = qs.length ? Math.min(...qs.map(q => q.s)) : 0, b = qs.length ? Math.max(...qs.map(q => q.d)) : 0;
+      M.hl.forEach(r => { r.setAttribute("x", X(a)); r.setAttribute("width", on && qs.length ? Math.max(3, X(b) - X(a)) : 0); });
+      if(on){ d.classList.add("active"); if(qs.length) select(qs[0].id, false); $("gantt").scrollIntoView({ behavior: "smooth", block: "center" }); }
+    };
+    $("findings").append(d);
+  });
+}
+
+function flags(q){
+  const f = [];
+  if(q.calls.some(c => c.rejected)) f.push("被拒");
+  if(q.calls.some(c => c.truncatedFrom)) f.push("截断");
+  if(q.calls.some(c => c.yielded)) f.push("转后台");
+  if(q.rewritten) f.push("上下文重写");
+  return f;
+}
+let rows = {};
+function renderList(){
+  rows = {};
+  $("list").replaceChildren(...M.R.filter(q => filter === "all" || q.thread === filter).map(q => rows[q.id] = h("div", { class: "row" + (q.id === selected ? " sel" : ""), onclick: () => select(q.id, false) },
+    h("span", { class: "id" }, "#" + q.id), h("span", { class: "t" }, fmt(q.s)),
+    h("span", { class: "lab" }, h("i", { class: "dot", style: `background:var(${KIND[q.cat][1]})` }), filter === "all" ? h("span", { class: "lane" }, M.laneName[q.thread]) : null, q.label, ...flags(q).map(f => h("span", { class: "warn" }, f))),
+    h("span", { class: "tok" }, "入 " + kfmt(q.tokens.input)))));
+}
+const pre = text => { const p = h("pre"); p.textContent = text; return p; };
+const block = (title, sub, text, open) => h("details", open ? { open: "" } : {}, h("summary", {}, title, h("span", { class: "sub" }, sub)), pre(text));
+function resultBlock(c, open){
+  const badges = [];
+  if(c.truncatedFrom) badges.push(h("span", { class: "badge red" }, "输出被截断，原 " + kfmt(c.truncatedFrom) + " token"));
+  if(c.rejected) badges.push(h("span", { class: "badge red" }, "rejected"));
+  if(c.yielded) badges.push(h("span", { class: "badge amber" }, "脚本未完成，转后台"));
+  return h("details", open ? { open: "" } : {}, h("summary", {}, "工具结果", h("span", { class: "sub" }, `${kfmt(c.resultChars)} 字符`), ...badges), pre(c.result));
+}
+function select(id, scroll){
+  selected = id; const q = M.R[id];
+  if(!rows[id]){ filter = "all"; $("chips").querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.k === "all")); renderList(); }
+  Object.values(rows).forEach(r => r.classList.remove("sel")); rows[id].classList.add("sel"); rows[id].scrollIntoView({ block: "nearest" });
+  Object.values(M.blocks).forEach(b => b.classList.remove("sel")); M.blocks[id]?.classList.add("sel");
+  const t = q.tokens, link = r => h("span", { class: "link", onclick: () => select(r.id, true) }, "#" + r.id);
+  const parts = [
+    h("h3", {}, `#${q.id} · ${M.laneName[q.thread]} 第 ${q.n} 次请求`),
+    h("div", { class: "sub" }, `${clock(q.start)} 发出 · ${fmt(q.s)} → ${fmt(q.e)} 模型返回 → ${fmt(q.d)} 工具完成 · ${q.model || ""} · 请求体 ${kfmt(q.bytes || 0)} 字节`),
+    h("div", { class: "toks" }, ...[["输入", kfmt(t.input)], ["缓存", t.input ? Math.round(t.cached / t.input * 100) + "%" : "—"], ["输出", t.output], ["其中推理", t.reasoning], ["推理耗时", (q.e - q.s).toFixed(1) + "s"], ["上下文条目", q.inputCount]].map(([k, v]) => h("span", {}, k + " ", h("b", {}, String(v)))))
+  ];
+  const ins = h("div", { class: "sec" }, h("div", { class: "h" }, "① 本次新增输入"));
+  if(q.rewritten) ins.append(h("div", { class: "note" }, "⚠ 输入不再以上一次请求为前缀（压缩或历史替换），以下为本次完整输入"));
+  else if(q.first) ins.append(h("div", { class: "note" }, "这是该线程在 trace 中的第一次请求（更早的请求不在 trace 里），以下为完整输入，其中的“历史模型输出”和工具结果来自更早的回合"));
+  else ins.append(h("div", { class: "note" }, "其余为同一线程已有上下文（", q.prev ? ["前一次请求 ", link(q.prev), " 及更早"] : "上一次请求不在本次范围内", `），本次请求共 ${kfmt(t.input)} token、${q.inputCount} 条上下文。` + (q.changedOld ? `旧上下文中有 ${q.changedOld} 条被改写，已一并列出。` : "")));
+  q.inputs.forEach(x => {
+    if(x.kind === "toolResult"){
+      if(x.call) ins.append(h("div", { class: "note" }, "工具结果 ← ", x.from ? link(x.from) : "", " " + x.call.label), resultBlock(x.call, false));
+      else ins.append(block("工具结果（调用不在本次范围内）", `${kfmt(x.raw.length)} 字符`, prettyResult(x.raw), false));
+    } else ins.append(block(x.title, `${kfmt(x.text.length)} 字符`, x.text, x.kind === "workon_input"));
+  });
+  if(!q.inputs.length) ins.append(h("div", { class: "note" }, "无新增输入"));
+  parts.push(ins);
+  const outs = h("div", { class: "sec" }, h("div", { class: "h" }, "② 模型输出"));
+  if(!q.outputs.length) outs.append(h("div", { class: "note" }, q.hasResponse ? "没有可还原的输出（响应被脱敏且没有后续请求）" : "没有响应记录"));
+  q.outputs.forEach(o => {
+    if(o.kind === "reasoning") outs.append(h("div", { class: "note" }, o.summary ? "推理摘要：" + o.summary : `推理：${o.encrypted ? "内容加密不可见" : "无摘要"}，本次推理 ${t.reasoning} token`));
+    else if(o.kind === "call") outs.append(h("div", { class: "box" }, h("div", { style: "margin:4px 0" }, "调用 ", h("b", {}, o.tool), " → ", o.label), pre(o.code)));
+    else outs.append(h("div", { class: "box" }, h("div", { style: "margin:4px 0" }, "文本", h("span", { class: "badge gray" }, "回合文本，不经 send_message 不会上屏")), pre(o.text || "（空）")));
+  });
+  parts.push(outs);
+  q.calls.forEach(c => parts.push(h("div", { class: "sec" }, h("div", { class: "h" }, `③ 工具执行 · ${c.label}` + (c.doneAt ? ` · ${((c.doneAt - q.end) / 1000).toFixed(1)}s` : "")), c.result != null ? resultBlock(c, true) : h("div", { class: "note" }, "没有找到结果（可能在本次范围之后）"))));
+  const vis = M.R.filter(r => filter === "all" || r.thread === filter), i = vis.indexOf(q);
+  parts.push(h("div", { class: "nav" }, h("button", { onclick: () => vis[i - 1] && select(vis[i - 1].id, true), disabled: vis[i - 1] ? null : "" }, "← 上一次"), h("button", { onclick: () => vis[i + 1] && select(vis[i + 1].id, true), disabled: vis[i + 1] ? null : "" }, "下一次 →")));
+  $("detail").replaceChildren(...parts); $("detail").scrollTop = 0;
+  if(scroll) $("list").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+document.addEventListener("keydown", e => {
+  if(!M || selected == null || !["ArrowDown", "ArrowUp"].includes(e.key) || e.target.closest("pre,input")) return;
+  const vis = M.R.filter(q => filter === "all" || q.thread === filter), i = vis.findIndex(q => q.id === selected);
+  const n = vis[i + (e.key === "ArrowDown" ? 1 : -1)]; if(n){ e.preventDefault(); select(n.id, false); }
+});
+
+/* ================= wiring ================= */
+async function load(source){
+  SRC = source; bodyCache.clear();
+  const st = $("status"); st.className = "status";
+  const set = s => st.textContent = s;
+  try{
+    IDX = await buildIndex(set);
+    const span = IDX.recs.length ? `${clock(IDX.recs[0].t)} → ${clock(IDX.recs.at(-1).t)}` : "";
+    $("srcInfo").textContent = `— ${source.label} · ${IDX.segs.length} 段 · ${IDX.total} 条记录 · ${IDX.exchanges.filter(x => x.dir === "request").length} 次模型请求 · ${span}` + (IDX.losses.length ? ` · ${IDX.losses.length} 条 capture.loss` : "");
+    set("");
+    $("loader").classList.add("hidden"); $("pickerSec").classList.remove("hidden"); $("view").classList.add("hidden");
+    renderCatChips(); renderPicker();
+  }catch(e){ console.error(e); st.className = "status err"; set("加载失败：" + e.message); }
+}
+$("dir").addEventListener("change", e => {
+  const files = [...e.target.files];
+  if(files.length) load(folderSource(files.map(f => ({ path: f.webkitRelativePath || f.name, file: f })), files[0].webkitRelativePath.split("/")[0]));
+});
+const drop = $("drop");
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, () => drop.classList.remove("over")));
+drop.addEventListener("drop", async e => {
+  e.preventDefault();
+  $("status").textContent = "读取文件列表…";
+  const entries = await collectDropped([...e.dataTransfer.items]);
+  load(folderSource(entries, entries[0]?.path.split("/")[0] || "拖入的文件夹"));
+});
+$("q").addEventListener("input", renderPicker);
+$("reload").onclick = () => { $("pickerSec").classList.add("hidden"); $("loader").classList.remove("hidden"); $("dir").value = ""; };
+$("back").onclick = () => { $("view").classList.add("hidden"); $("pickerSec").classList.remove("hidden"); };
+const srcParam = new URLSearchParams(location.search).get("src");
+if(srcParam) load(urlSource(new URL(srcParam, location.href).href));
+</script>
+</body>
+</html>
