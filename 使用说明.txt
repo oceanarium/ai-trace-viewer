@@ -1,0 +1,9 @@
+AI Trace 请求查看器
+
+双击 ai-trace-viewer.html 即可在浏览器打开。
+将完整 ai-trace 文件夹拖入页面，或点击“选择文件夹”导入。
+日志解析在本地浏览器完成。
+
+页面的 JavaScript 和 CSS 均内嵌在 HTML 中，没有额外依赖文件。
+如需静态部署，将此 HTML 命名为 index.html 即可。
+此文件夹不包含 WorkOn 工程、日志和用户数据。
