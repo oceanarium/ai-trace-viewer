@@ -768,8 +768,8 @@ function select(id, scroll){
   else ins.append(h("div", { class: "note" }, "其余为同一线程已有上下文（", q.prev ? ["前一次请求 ", link(q.prev), " 及更早"] : "上一次请求不在本次范围内", `），本次请求共 ${kfmt(t.input)} token、${q.inputCount} 条上下文。` + (q.changedOld ? `旧上下文中有 ${q.changedOld} 条被改写，已一并列出。` : "")));
   q.inputs.forEach(x => {
     if(x.kind === "toolResult"){
-      if(x.call && x.history) ins.append(h("div", { class: "note" }, "工具结果 ← 历史上下文中的调用（发生在选中范围之前的回合） " + x.call.label),
-        block(`调用 ${x.call.tool}`, `${kfmt(x.call.code.length)} 字符`, x.call.code, false), resultBlock(x.call, false));
+      if(x.call && x.history) ins.append(h("div", { class: "note" }, "工具结果 ← 更早回合的调用（不在选中范围内，调用内容取自本次请求的历史上下文）"),
+        h("div", { class: "box" }, h("div", { style: "margin:4px 0" }, "调用 ", h("b", {}, x.call.tool), " → ", x.call.label), pre(x.call.code)), resultBlock(x.call, false));
       else if(x.call) ins.append(h("div", { class: "note" }, "工具结果 ← ", x.from ? link(x.from) : "", " " + x.call.label), resultBlock(x.call, false));
       else ins.append(block("工具结果（未在日志中找到对应调用）", `${kfmt(x.raw.length)} 字符` + (x.callId ? ` · ${x.callId}` : ""), prettyResult(x.raw), false));
     } else ins.append(block(x.title, `${kfmt(x.text.length)} 字符`, x.text, x.kind === "workon_input"));
